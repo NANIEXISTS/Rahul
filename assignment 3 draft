@@ -1,0 +1,218 @@
+
+#if CONFIG_FREERTOS_UNICORE
+#define ARDUINO_RUNNING_CORE 0
+#else
+#define ARDUINO_RUNNING_CORE 1
+#endif
+
+#include <Arduino.h>
+#include<freertos/FreeRTOS.h>
+#include<freertos/queue.h>
+#include<freertos/task.h>
+
+SemaphoreHandle_t sem;
+
+int t1_out = 1;                                               // The Task 1 LED, known as t1_out, is attached to pin 1.
+int freq01_output= 18;                                        // Frequency for Task 2 is read from 18 via freq01_outputpin.
+
+float f1;                                                     // Task 2's frequency is shown further down.
+int freq01_1;                                                 // used to scale the frq read from Task 2 in Task 5
+float freq01_readin;                                          // Here is the Frq time variation of Task 2.
+UnKwn t1;                                                     // Time stamp used in Task 2 to Calculate Time
+UnKwn t2;                                                     // time stamp used to measure time in Task 2
+int f2_in = 10;                                               // f2_in pin is utilised to read task 3's frequency from 10
+float f2;                                                     // frequency of task 3 is here
+int f2_1;                                                     // Used in task 5 to scale the frq read in Task 3
+float f2_read;                                                // Frq time difference of Task 3 is here
+UnKwn t3;                                                     // time stamp used to measure time in Task 3
+UnKwn t4;                                                     // time stamp used to measure time in Task 3
+int potentioValuePreameterstioP = 7;                          // The wiper pin of potentioValuePreameterstiometer is connected to Pin 8, named as potentioValuePreameterstioP
+int EM_LED = 2;                                               // The LED of Task 4 is connected to pin 2
+float potentioValuePreametersioValue;                         // The analog data read from potentioValuePreameterstiometer is stored here
+float cal_val =0;                                             // used to elevate the voltage from 0 volts to 3.3 volts
+
+
+
+typedef struct {
+  float a1;                                                   // 4th reading from the potentioValuePreameterstiometer
+  float a2;                                                   // 2nd reading from the potentioValuePreameterstiometer 
+  float a3;                                                   // 3rd reading from the potentioValuePreameterstiometer 
+  float a4;                                                   // Latest reading from potentioValuePreameterstiometer
+} AnalogData; 
+AnalogData analogData;
+float Avg_analog;                                             // Average of recent 4 potentioValuePreameterstiometer values is stored here
+float REF_M;                                                  // Value used as a reference to glow the EM_LED
+bool ledState = LOW;                                          // State of LED for debouncing LED task
+QueueHandle_t q1, q2;                                         // Queue handlers
+int SWITCHPIN = 19;                                           // Push Button used in Debouncing task connected to pin 19
+int LED_PIN = 3;                                              // LED used in Debouncing LED task connected to pin 3
+bool SwitchState;                                             // boolean variable used to check state of button
+bool lastSwitchState; 
+uint8_t event;
+bool blinkON = false;
+
+
+void task1(void *potentioValuePreameterstioValuePreameters)  // We create a digital signal and pulse it appropriately in Task 1.
+
+{
+  while(1)
+  {
+    digitalWrite(t1_out, HIGH);
+    delayMicroseconds(200);
+    digitalWrite(t1_out, LOW);
+    delayMicroseconds(50);
+    digitalWrite(t1_out, HIGH);
+    delayMicroseconds(30);  
+    digitalWrite(t1_out, LOW);
+    vTaskDelay(4 / potentio_PERIOD_MS);
+  }  
+}
+
+void task2(void *potentioValuePreameterstioValuePreameters)  // We read a square wave signal with a 50% duty cycle that has a frequency range of between 333Hz and 1000Hz in Task 2.
+
+{
+  while(1)
+  {
+    xSemaphoreTake(sem, portMAX_DELAY);
+    while (digitalRead(f1_in) == LOW);
+    t1 = micros();
+    while (digitalRead(f1_in) == HIGH);
+    t2 = micros();
+    freq01_readin = (t2 - t1)*0.000001; 
+    f1 = 1/(freq01_readin*2);
+
+    xSemaphoreGive(sem);
+    vTaskDelay(20 / potentio_PERIOD_MS);
+  }  
+}
+
+void task3(void *potentioValuePreameterstioValuePreameters) // We read a square wave signal with a 50% duty cycle that has a frequency range of 500Hz to 1000Hz in Task 3.
+
+{
+  while(1)
+  {
+    xSemaphoreTake(sem, portMAX_DELAY);
+    while (digitalRead(f2_in) == LOW);
+    t3 = micros();
+    while (digitalRead(f2_in) == HIGH);
+    t4 = micros();
+    f2_read = (t4 - t3)*0.000001;
+    f2 = 1/(f2_read*2);
+
+    xSemaphoreGive(sem);
+    vTaskDelay(8 / potentio_PERIOD_MS);
+  } 
+}
+
+void task4(void *potentioValuePreameterstioValuePreameters) {  // Task 4 involves reading analogue data from a potentioValuePreameterstiometer and using that data to calculate how much an LED should light.
+
+  REF_M = 3.3 / 2;
+  analogData.a1 = 0;
+  analogData.a2 = 0;
+  analogData.a3 = 0;
+  analogData.a4 = 0;
+  
+  while(1) {
+    potentioValuePreametersioValue = analogRead(potentioValuePreameterstioP);
+    cal_val = (3.3 * potentioValuePreametersioValue) / 4095;
+    xSemaphoreTake(sem, portMAX_DELAY);
+    analogData.a1 = analogData.a2;
+    analogData.a2 = analogData.a3;
+    analogData.a3 = analogData.a4;
+    analogData.a4 = cal_val;
+    xSemaphoreGive(sem);
+
+    float Avg_analog;
+    xSemaphoreTake(sem, portMAX_DELAY);
+    Avg_analog = (analogData.a1 + analogData.a2 + analogData.a3 + analogData.a4) / 4;
+    xSemaphoreGive(sem);
+
+    if (Avg_analog > REF_M) {
+      digitalWrite(EM_LED, HIGH);
+    } else {
+      digitalWrite(EM_LED, LOW);
+    }
+    vTaskDelay(20 / potentio_PERIOD_MS);
+  }
+}
+
+void task5(void *potentioValuePreameterstioValuePreameters)  // After scaling the frequency values obtained in tasks 2 and 3, we display them in task 5.
+
+{
+  freq01_1 = 0, f2_1 = 0;  
+    while(1)
+    {     
+      freq01_1 = ((f1 - 333)*99)/(1000 - 333);
+      f2_1 = ((f2 - 500)*99)/(1000 - 500);
+
+      if(freq01_1<=0){freq01_1 = 0;}
+      else if(freq01_1 > 99){freq01_1 = 99;}
+      else{freq01_1 = freq01_1;}
+
+      if(f2_1<=0){f2_1 = 0;}
+      else if(f2_1 > 99){f2_1 = 99;}
+      else{f2_1 = f2_1;}
+
+      Serial.printf("%d, %d\n",freq01_1, f2_1);
+      vTaskDelay(100 / potentio_PERIOD_MS);
+  }
+}
+
+void task6(void* parameter) { // Debouncing is used in tasks 6 and 7 to make an LED linked to a push button flash.
+  bool lastSwitchState = false;
+  while (1) {
+    bool SwitchState = digitalRead(SWITCHPIN);
+    if (SwitchState != lastSwitchState) {
+      delay(5);
+      SwitchState = digitalRead(SWITCHPIN);
+    }
+    if (SwitchState != lastSwitchState) {
+      lastSwitchState = SwitchState;
+      if (SwitchState == LOW) {
+        uint8_t event = 1;
+        xQueueSend(q1, &event, portMAX_DELAY);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(20)); 
+  }
+}
+
+void task7(void* parameter) {
+  uint8_t event;
+  while (1) {
+    if (xQueueReceive(q1, &event, portMAX_DELAY) == pdPASS) {
+      // Toggle the LED state
+      blinkON = !blinkON;
+      digitalWrite(LED_PIN, blinkON);
+    }
+  }
+}
+
+void setup() 
+{
+  Serial.begin(9600);
+  pinMode(f1_in, INPUT);
+  pinMode(f2_in, INPUT);
+  pinMode(t1_out, OUTPUT);
+  pinMode(EM_LED, OUTPUT);
+  pinMode(SWITCHPIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+
+  xTaskCreatePinnedToCore(task1, "Task 1", 2048, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(task2, "Task 2", 2048, NULL, 4, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(task3, "Task 3", 2048, NULL, 4, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(task4, "Task 4", 2048, NULL, 3, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(task5, "Task 5", 2048, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(task6, "Task 6", 2048, NULL, 2, NULL, ARDUINO_RUNNING_CORE);
+  xTaskCreatePinnedToCore(task7, "Task 7", 2048, NULL, 2, NULL, ARDUINO_RUNNING_CORE);
+
+  sem = xSemaphoreCreateMutex();
+
+  q1 = xQueueCreate(10, sizeof(float));
+  q2 = xQueueCreate(10, sizeof(float));
+}
+
+void loop() 
+{
+  // Nothing here
+}
